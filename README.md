@@ -1,61 +1,103 @@
 # Hole.io Web
 
+Una implementación web del popular juego Hole.io utilizando Three.js para la renderización 3D y Ammo.js para la física.
+
+![Hole.io Web Screenshot](screenshots/game.jpg)
+
 ## Descripción
-Hole.io Web es una versión para navegador del popular juego Hole.io, desarrollada con JavaScript y Three.js. En este juego, controlas un agujero negro que se mueve por la ciudad absorbiendo objetos para crecer en tamaño y puntuación.
+
+Hole.io Web es un juego donde controlas un agujero negro que absorbe objetos de la ciudad. A medida que absorbes objetos, el agujero crece, permitiéndote absorber estructuras más grandes. El objetivo es conseguir la mayor puntuación antes de que se acabe el tiempo o absorber todos los objetos del nivel.
 
 ## Características
-- **Control intuitivo**: Mueve el agujero usando las teclas WASD o las flechas del teclado.
-- **Física realista**: Los objetos caen en el agujero con efectos de física realistas.
-- **Variedad de objetos**: Absorbe edificios, coches, árboles, farolas, bancos y coleccionables.
-- **Sistema de niveles**: Progresa a través de niveles con dificultad creciente.
-- **Efectos visuales**: Disfruta de efectos visuales atractivos como partículas, luces y shaders personalizados.
-- **Crecimiento dinámico**: El agujero crece proporcionalmente al tamaño de los objetos absorbidos.
-- **Coleccionables**: Recoge pequeños puntos brillantes para aumentar tu puntuación rápidamente.
+
+- Renderizado 3D con Three.js
+- Física realista con Ammo.js
+- Diferentes tipos de objetos: edificios, coches, árboles, farolas, bancos, etc.
+- Sistema de niveles progresivos
+- Efectos visuales para el agujero (vórtice, partículas)
+- Controles táctiles para dispositivos móviles
+- Sistema de audio con música y efectos de sonido
+- Interfaz de usuario interactiva
+
+## Requisitos
+
+- Navegador web moderno con soporte para WebGL
+- Conexión a Internet (solo para la carga inicial)
+
+## Instalación
+
+1. Clona este repositorio:
+```
+git clone https://github.com/tu-usuario/web-hole-io.git
+```
+
+2. Navega al directorio del proyecto:
+```
+cd web-hole-io
+```
+
+3. Puedes servir el juego utilizando cualquier servidor web. Una opción simple es usar Python:
+
+```
+# Python 3
+python -m http.server
+
+# Python 2
+python -m SimpleHTTPServer
+```
+
+4. Abre tu navegador y ve a `http://localhost:8000`
 
 ## Cómo jugar
-1. Usa las teclas WASD o las flechas para mover el agujero por el mapa.
-2. Absorbe objetos pasando por debajo de ellos para aumentar tu puntuación y tamaño.
-3. Recoge los coleccionables brillantes para obtener puntos adicionales.
-4. Alcanza la puntuación objetivo antes de que se acabe el tiempo para pasar al siguiente nivel.
-5. ¡Intenta llegar lo más lejos posible!
 
-## Tecnologías utilizadas
-- **Three.js**: Para renderizado 3D y efectos visuales.
-- **JavaScript**: Para la lógica del juego y la interactividad.
-- **HTML5/CSS3**: Para la estructura y el estilo de la interfaz.
-- **Shaders GLSL**: Para efectos visuales avanzados como el vórtice del agujero.
+- Usa las teclas WASD o las flechas del teclado para mover el agujero.
+- En dispositivos móviles, utiliza el joystick en pantalla.
+- Absorbe objetos pasando sobre ellos con tu agujero.
+- Recoge los coleccionables para conseguir puntos adicionales.
+- Intenta absorber todos los objetos antes de que se acabe el tiempo.
 
-## Instalación y ejecución
-1. Clona este repositorio:
-   ```
-   git clone https://github.com/kevinduhamelhayes/hole.ico.git
-   ```
-2. Navega al directorio del proyecto:
-   ```
-   cd hole.ico
-   ```
-3. Abre el archivo `index.html` en tu navegador o utiliza un servidor local.
+## Estructura del proyecto
 
-## Desarrollo
-Para contribuir al proyecto:
-1. Haz un fork del repositorio.
-2. Crea una rama para tu característica:
-   ```
-   git checkout -b feature/nueva-caracteristica
-   ```
-3. Realiza tus cambios y haz commit:
-   ```
-   git commit -m "Añadir nueva característica"
-   ```
-4. Envía tus cambios a tu fork:
-   ```
-   git push origin feature/nueva-caracteristica
-   ```
-5. Crea un Pull Request en GitHub.
+```
+web-hole-io/
+├── index.html          # Archivo HTML principal
+├── css/                # Estilos CSS
+│   └── style.css       # Estilos del juego
+├── js/                 # Código JavaScript
+│   ├── game.js         # Clase principal del juego
+│   ├── hole.js         # Clase del agujero (jugador)
+│   ├── objects.js      # Definición de los objetos del juego
+│   ├── components/     # Componentes reutilizables
+│   │   └── ...
+│   ├── effects/        # Efectos visuales
+│   │   └── ...
+│   ├── managers/       # Gestores del juego
+│   │   ├── AudioManager.js
+│   │   ├── CameraManager.js
+│   │   ├── ObjectManager.js
+│   │   └── UIManager.js
+│   └── physics/        # Motor de física
+│       └── PhysicsEngine.js
+├── assets/             # Recursos del juego
+│   ├── audio/          # Archivos de audio
+│   │   ├── music/      # Música de fondo
+│   │   └── sfx/        # Efectos de sonido
+│   └── textures/       # Texturas
+└── screenshots/        # Capturas de pantalla del juego
+```
 
-## Licencia
-Este proyecto está licenciado bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) para más detalles.
+## Desarrollo futuro
+
+- Modo multijugador
+- Más tipos de objetos
+- Mejoras de rendimiento
+- Personalización del agujero (colores, efectos)
+- Tablas de clasificación
 
 ## Créditos
-Desarrollado por Kevin Duhamel Hayes.
-Inspirado en el juego original Hole.io. 
+
+Este juego es una adaptación del popular Hole.io para navegadores web, desarrollado con tecnologías web modernas.
+
+## Licencia
+
+[MIT License](LICENSE) 

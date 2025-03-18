@@ -1,246 +1,176 @@
-// Variables globales
-let scene, camera, renderer, physics;
-let hole, objects = [], collectibles = [];
-let score = 0;
-let holeSize = 1.0;
-let keys = {};
-let level = 1;
-let targetScore = 50; // Puntuación objetivo para pasar al siguiente nivel
-let gameStarted = false;
-let gameOver = false;
-let levelTime = 120; // Tiempo en segundos para completar el nivel
-let timeRemaining = levelTime;
-let lastUpdateTime = 0;
-
-// Sonidos
-let audioListener;
-let sounds = {};
-
-// Física
-let world;
-let tmpTrans;
-let ammoClone;
-
-// Inicializar el juego
-async function init() {
-    console.log("Inicializando juego...");
-    
-    try {
-        // Crear escena
-        scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x87CEEB); // Color de cielo
+/**
+ * Hole.io Web - Juego principal
+ * Integra todos los componentes y gestores
+ */
+class Game {
+    /**
+     * Constructor
+     * @param {Object} options - Opciones de configuración
+     */
+    constructor(options = {}) {
+        // Contenedor del juego
+        this.container = options.container || document.body;
         
-        // Crear niebla para dar sensación de profundidad
-        scene.fog = new THREE.FogExp2(0x87CEEB, 0.01);
-
-        // Crear cámara
-        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.set(0, 20, -20); // Posición más elevada y alejada
-        camera.lookAt(0, 0, 0);
-
-        // Crear renderer
-        renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.shadowMap.enabled = true;
-        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-        document.getElementById('game-container').appendChild(renderer.domElement);
-
-        // Inicializar física (con manejo de errores)
+        // Configuración
+        this.config = {
+            width: window.innerWidth,
+            height: window.innerHeight,
+            mapSize: options.mapSize || 100,
+            timeLimit: options.timeLimit || 60,
+            initialHoleSize: options.initialHoleSize || 1.0,
+            maxHoleSize: options.maxHoleSize || 10.0,
+            growFactor: options.growFactor || 0.02,
+            cameraHeight: options.cameraHeight || 20,
+            cameraDistance: options.cameraDistance || 20
+        };
+        
+        // Estado del juego
+        this.state = {
+            running: false,
+            paused: false,
+            score: 0,
+            level: 1,
+            timeRemaining: this.config.timeLimit,
+            lastTime: 0,
+            inputX: 0,
+            inputY: 0,
+            keys: {}
+        };
+        
+        // Componentes Three.js
+        this.scene = null;
+        this.camera = null;
+        this.renderer = null;
+        this.clock = null;
+        
+        // Gestores
+        this.physicsEngine = null;
+        this.objectManager = null;
+        this.cameraManager = null;
+        this.audioManager = null;
+        this.uiManager = null;
+        
+        // Jugador (agujero)
+        this.hole = null;
+        
+        // Inicializar
+        this.init();
+    }
+    
+    /**
+     * Inicializa el juego
+     */
+    async init() {
         try {
-            await initPhysics();
-            console.log("Física inicializada correctamente");
+            console.log("Inicializando juego...");
+            
+            // Crear escena Three.js
+            this.initThree();
+            
+            // Crear gestores
+            this.initManagers();
+            
+            // Configurar eventos
+            this.setupEventListeners();
+            
+            // Cargar recursos
+            await this.loadResources();
+            
+            // Mostrar menú principal
+            this.uiManager.showScreen('main');
+            
+            // Iniciar bucle de renderizado
+            this.animate();
+            
+            console.log("Juego inicializado correctamente");
         } catch (error) {
-            console.error("Error al inicializar física:", error);
-            // Continuar sin física
+            console.error("Error al inicializar el juego:", error);
+            this.showError("Error al inicializar el juego: " + error.message);
         }
-
-        // Inicializar audio
-        initAudio();
-
-        // Añadir luces
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-        scene.add(ambientLight);
-
+    }
+    
+    /**
+     * Inicializa Three.js
+     */
+    initThree() {
+        // Crear escena
+        this.scene = new THREE.Scene();
+        this.scene.background = new THREE.Color(0x87CEEB); // Color de cielo
+        
+        // Crear cámara
+        this.camera = new THREE.PerspectiveCamera(
+            60, 
+            this.config.width / this.config.height, 
+            0.1, 
+            1000
+        );
+        this.camera.position.set(0, this.config.cameraHeight, -this.config.cameraDistance);
+        this.camera.lookAt(0, 0, 0);
+        
+        // Crear renderer
+        this.renderer = new THREE.WebGLRenderer({ antialias: true });
+        this.renderer.setSize(this.config.width, this.config.height);
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        
+        // Añadir canvas al DOM
+        this.renderer.domElement.id = 'game-canvas';
+        this.container.appendChild(this.renderer.domElement);
+        
+        // Crear reloj para animaciones
+        this.clock = new THREE.Clock();
+        
+        // Crear luces
+        this.createLights();
+        
+        // Crear suelo
+        this.createGround();
+        
+        // Crear límites del mapa
+        this.createMapBoundaries();
+    }
+    
+    /**
+     * Crea las luces de la escena
+     */
+    createLights() {
+        // Luz ambiental
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        this.scene.add(ambientLight);
+        
+        // Luz direccional (sol)
         const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        directionalLight.position.set(10, 20, 10);
+        directionalLight.position.set(50, 100, 50);
         directionalLight.castShadow = true;
+        
+        // Configurar sombras
         directionalLight.shadow.mapSize.width = 2048;
         directionalLight.shadow.mapSize.height = 2048;
         directionalLight.shadow.camera.near = 0.5;
-        directionalLight.shadow.camera.far = 50;
-        directionalLight.shadow.camera.left = -30;
-        directionalLight.shadow.camera.right = 30;
-        directionalLight.shadow.camera.top = 30;
-        directionalLight.shadow.camera.bottom = -30;
-        scene.add(directionalLight);
-
-        // Crear suelo (sin física si no está disponible)
-        createGround();
-
-        // Crear el agujero
-        hole = new Hole(scene);
-        console.log("Agujero creado:", hole);
+        directionalLight.shadow.camera.far = 500;
+        directionalLight.shadow.camera.left = -100;
+        directionalLight.shadow.camera.right = 100;
+        directionalLight.shadow.camera.top = 100;
+        directionalLight.shadow.camera.bottom = -100;
         
-        // Mostrar pantalla de inicio
-        showStartScreen();
-
-        // Eventos de teclado
-        document.addEventListener('keydown', (e) => {
-            keys[e.code] = true;
-            
-            // Iniciar juego con espacio
-            if (e.code === 'Space' && !gameStarted) {
-                startGame();
-            }
-        });
-        document.addEventListener('keyup', (e) => keys[e.code] = false);
-
-        // Evento de redimensión
-        window.addEventListener('resize', onWindowResize);
-
-        // Iniciar bucle de animación
-        animate();
-        console.log("Juego inicializado correctamente");
-    } catch (error) {
-        console.error("Error al inicializar el juego:", error);
-    }
-}
-
-// Inicializar física con Ammo.js
-async function initPhysics() {
-    console.log("Inicializando física...");
-    
-    // Verificar si Ammo está disponible
-    if (typeof Ammo === 'undefined') {
-        console.error("Ammo.js no está disponible");
-        return Promise.reject("Ammo.js no está disponible");
+        this.scene.add(directionalLight);
     }
     
-    // Cargar Ammo.js
-    return new Promise((resolve, reject) => {
-        try {
-            if (typeof Ammo === 'function') {
-                console.log("Cargando Ammo.js...");
-                Ammo().then((AmmoLib) => {
-                    console.log("Ammo.js cargado correctamente");
-                    ammoClone = AmmoLib;
-                    setupPhysicsWorld();
-                    resolve();
-                }).catch(error => {
-                    console.error("Error al cargar Ammo.js:", error);
-                    reject(error);
-                });
-            } else {
-                // Si ya está cargado
-                console.log("Ammo.js ya está cargado");
-                setupPhysicsWorld();
-                resolve();
-            }
-        } catch (error) {
-            console.error("Error en initPhysics:", error);
-            reject(error);
-        }
-    });
-}
-
-// Configurar mundo físico
-function setupPhysicsWorld() {
-    try {
-        console.log("Configurando mundo físico...");
-        // Configuración de la física
-        const collisionConfiguration = new ammoClone.btDefaultCollisionConfiguration();
-        const dispatcher = new ammoClone.btCollisionDispatcher(collisionConfiguration);
-        const overlappingPairCache = new ammoClone.btDbvtBroadphase();
-        const solver = new ammoClone.btSequentialImpulseConstraintSolver();
-        
-        // Crear mundo físico
-        world = new ammoClone.btDiscreteDynamicsWorld(
-            dispatcher, overlappingPairCache, solver, collisionConfiguration
+    /**
+     * Crea el suelo
+     */
+    createGround() {
+        // Geometría del suelo
+        const groundGeometry = new THREE.PlaneGeometry(
+            this.config.mapSize, 
+            this.config.mapSize, 
+            10, 
+            10
         );
         
-        // Establecer gravedad
-        world.setGravity(new ammoClone.btVector3(0, -9.8, 0));
-        
-        // Crear transformación temporal para reutilizar
-        tmpTrans = new ammoClone.btTransform();
-        console.log("Mundo físico configurado correctamente");
-    } catch (error) {
-        console.error("Error al configurar mundo físico:", error);
-    }
-}
-
-// Inicializar audio
-function initAudio() {
-    try {
-        console.log("Inicializando audio...");
-        // Crear listener de audio
-        audioListener = new THREE.AudioListener();
-        camera.add(audioListener);
-        
-        // Cargar sonidos
-        loadSound('fall', 'https://assets.mixkit.co/sfx/preview/mixkit-arcade-game-jump-coin-216.mp3');
-        loadSound('levelUp', 'https://assets.mixkit.co/sfx/preview/mixkit-unlock-game-notification-253.mp3');
-        loadSound('gameOver', 'https://assets.mixkit.co/sfx/preview/mixkit-player-losing-or-failing-2042.mp3');
-        loadSound('background', 'https://assets.mixkit.co/sfx/preview/mixkit-game-level-music-689.mp3', true);
-        console.log("Audio inicializado correctamente");
-    } catch (error) {
-        console.error("Error al inicializar audio:", error);
-    }
-}
-
-// Cargar un sonido
-function loadSound(name, url, loop = false) {
-    try {
-        const sound = new THREE.Audio(audioListener);
-        const audioLoader = new THREE.AudioLoader();
-        
-        audioLoader.load(url, function(buffer) {
-            sound.setBuffer(buffer);
-            sound.setLoop(loop);
-            sound.setVolume(0.5);
-            sounds[name] = sound;
-            console.log(`Sonido '${name}' cargado correctamente`);
-            
-            // Reproducir música de fondo al cargar
-            if (name === 'background' && gameStarted) {
-                sound.play();
-            }
-        }, undefined, function(error) {
-            console.error(`Error al cargar sonido '${name}':`, error);
-        });
-    } catch (error) {
-        console.error(`Error al configurar sonido '${name}':`, error);
-    }
-}
-
-// Reproducir un sonido
-function playSound(name) {
-    try {
-        if (sounds[name] && !sounds[name].isPlaying) {
-            sounds[name].play();
-        }
-    } catch (error) {
-        console.error(`Error al reproducir sonido '${name}':`, error);
-    }
-}
-
-// Crear suelo
-function createGround() {
-    try {
-        console.log("Creando suelo...");
-        // Geometría del suelo
-        const groundGeometry = new THREE.PlaneGeometry(100, 100, 10, 10);
-        
-        // Textura del suelo
-        const textureLoader = new THREE.TextureLoader();
-        const groundTexture = textureLoader.load('https://threejs.org/examples/textures/hardwood2_diffuse.jpg');
-        groundTexture.wrapS = THREE.RepeatWrapping;
-        groundTexture.wrapT = THREE.RepeatWrapping;
-        groundTexture.repeat.set(10, 10);
-        
         // Material del suelo
-        const groundMaterial = new THREE.MeshStandardMaterial({ 
-            map: groundTexture,
+        const groundMaterial = new THREE.MeshStandardMaterial({
+            color: 0x999999,
             roughness: 0.8,
             metalness: 0.2
         });
@@ -249,786 +179,524 @@ function createGround() {
         const ground = new THREE.Mesh(groundGeometry, groundMaterial);
         ground.rotation.x = -Math.PI / 2;
         ground.receiveShadow = true;
-        scene.add(ground);
         
-        // Añadir física al suelo si está disponible
-        if (ammoClone && world) {
-            const groundShape = new ammoClone.btBoxShape(new ammoClone.btVector3(50, 1, 50));
-            const groundTransform = new ammoClone.btTransform();
-            groundTransform.setIdentity();
-            groundTransform.setOrigin(new ammoClone.btVector3(0, -1, 0));
-            
-            const groundMass = 0; // Masa 0 = objeto estático
-            const groundLocalInertia = new ammoClone.btVector3(0, 0, 0);
-            
-            const groundMotionState = new ammoClone.btDefaultMotionState(groundTransform);
-            const groundRbInfo = new ammoClone.btRigidBodyConstructionInfo(
-                groundMass, groundMotionState, groundShape, groundLocalInertia
-            );
-            
-            const groundBody = new ammoClone.btRigidBody(groundRbInfo);
-            world.addRigidBody(groundBody);
-        }
-        console.log("Suelo creado correctamente");
-    } catch (error) {
-        console.error("Error al crear suelo:", error);
-    }
-}
-
-// Mostrar pantalla de inicio
-function showStartScreen() {
-    const startScreen = document.createElement('div');
-    startScreen.id = 'start-screen';
-    startScreen.style.position = 'absolute';
-    startScreen.style.top = '0';
-    startScreen.style.left = '0';
-    startScreen.style.width = '100%';
-    startScreen.style.height = '100%';
-    startScreen.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-    startScreen.style.display = 'flex';
-    startScreen.style.flexDirection = 'column';
-    startScreen.style.justifyContent = 'center';
-    startScreen.style.alignItems = 'center';
-    startScreen.style.color = 'white';
-    startScreen.style.fontFamily = 'Arial, sans-serif';
-    startScreen.style.zIndex = '1000';
-    
-    const title = document.createElement('h1');
-    title.textContent = 'Hole.io Web';
-    title.style.fontSize = '3em';
-    title.style.marginBottom = '20px';
-    
-    const instructions = document.createElement('p');
-    instructions.textContent = 'Usa las teclas WASD o las flechas para mover el agujero';
-    instructions.style.fontSize = '1.5em';
-    instructions.style.marginBottom = '10px';
-    
-    const objective = document.createElement('p');
-    objective.textContent = 'Absorbe objetos para crecer y pasar al siguiente nivel';
-    objective.style.fontSize = '1.5em';
-    objective.style.marginBottom = '30px';
-    
-    const startButton = document.createElement('button');
-    startButton.textContent = 'Presiona ESPACIO para comenzar';
-    startButton.style.padding = '15px 30px';
-    startButton.style.fontSize = '1.2em';
-    startButton.style.backgroundColor = '#4CAF50';
-    startButton.style.border = 'none';
-    startButton.style.borderRadius = '5px';
-    startButton.style.cursor = 'pointer';
-    startButton.onclick = startGame;
-    
-    startScreen.appendChild(title);
-    startScreen.appendChild(instructions);
-    startScreen.appendChild(objective);
-    startScreen.appendChild(startButton);
-    
-    document.getElementById('game-container').appendChild(startScreen);
-}
-
-// Iniciar juego
-function startGame() {
-    console.log("Iniciando juego...");
-    gameStarted = true;
-    
-    // Ocultar pantalla de inicio
-    const startScreen = document.getElementById('start-screen');
-    if (startScreen) {
-        startScreen.style.display = 'none';
+        this.scene.add(ground);
     }
     
-    // Mostrar HUD
-    updateHUD();
-    
-    // Reproducir música de fondo
-    if (sounds.background) {
-        sounds.background.play();
-    }
-    
-    // Iniciar temporizador
-    lastUpdateTime = Date.now();
-    
-    // Cargar nivel
-    loadLevel(level);
-    
-    console.log("Juego iniciado correctamente");
-}
-
-// Actualizar HUD
-function updateHUD() {
-    // Actualizar puntuación
-    document.getElementById('score-value').textContent = score;
-    
-    // Actualizar tamaño
-    document.getElementById('size-value').textContent = holeSize.toFixed(1);
-    
-    // Actualizar nivel y tiempo si no existen
-    if (!document.getElementById('level')) {
-        const levelDiv = document.createElement('div');
-        levelDiv.id = 'level';
-        levelDiv.style.position = 'absolute';
-        levelDiv.style.top = '20px';
-        levelDiv.style.left = '50%';
-        levelDiv.style.transform = 'translateX(-50%)';
-        levelDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-        levelDiv.style.color = 'white';
-        levelDiv.style.padding = '10px 15px';
-        levelDiv.style.borderRadius = '5px';
-        levelDiv.style.fontSize = '18px';
-        levelDiv.style.zIndex = '100';
-        levelDiv.innerHTML = 'Nivel: <span id="level-value">1</span>';
-        document.getElementById('game-container').appendChild(levelDiv);
-    }
-    
-    if (!document.getElementById('time')) {
-        const timeDiv = document.createElement('div');
-        timeDiv.id = 'time';
-        timeDiv.style.position = 'absolute';
-        timeDiv.style.top = '60px';
-        timeDiv.style.left = '50%';
-        timeDiv.style.transform = 'translateX(-50%)';
-        timeDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-        timeDiv.style.color = 'white';
-        timeDiv.style.padding = '10px 15px';
-        timeDiv.style.borderRadius = '5px';
-        timeDiv.style.fontSize = '18px';
-        timeDiv.style.zIndex = '100';
-        timeDiv.innerHTML = 'Tiempo: <span id="time-value">120</span>';
-        document.getElementById('game-container').appendChild(timeDiv);
-    }
-    
-    // Actualizar valores
-    document.getElementById('level-value').textContent = level;
-    document.getElementById('time-value').textContent = Math.ceil(timeRemaining);
-    
-    // Actualizar objetivo
-    if (!document.getElementById('target')) {
-        const targetDiv = document.createElement('div');
-        targetDiv.id = 'target';
-        targetDiv.style.position = 'absolute';
-        targetDiv.style.bottom = '20px';
-        targetDiv.style.left = '50%';
-        targetDiv.style.transform = 'translateX(-50%)';
-        targetDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-        targetDiv.style.color = 'white';
-        targetDiv.style.padding = '10px 15px';
-        targetDiv.style.borderRadius = '5px';
-        targetDiv.style.fontSize = '18px';
-        targetDiv.style.zIndex = '100';
-        targetDiv.innerHTML = 'Objetivo: <span id="score-current">0</span>/<span id="score-target">50</span>';
-        document.getElementById('game-container').appendChild(targetDiv);
-    }
-    
-    document.getElementById('score-current').textContent = score;
-    document.getElementById('score-target').textContent = targetScore;
-}
-
-// Cargar nivel
-function loadLevel(levelNum) {
-    // Limpiar objetos existentes
-    objects.forEach(obj => {
-        scene.remove(obj.mesh);
-    });
-    objects = [];
-    
-    // Limpiar coleccionables existentes
-    collectibles.forEach(collectible => {
-        scene.remove(collectible.mesh);
-    });
-    collectibles = [];
-    
-    // Configurar nivel
-    switch(levelNum) {
-        case 1:
-            targetScore = 50;
-            levelTime = 120;
-            createObjects(10, 5, 3, 2, 0); // edificios, coches, árboles, farolas, bancos
-            createCollectibles(20); // Puntos pequeños de recolección
-            break;
-        case 2:
-            targetScore = 100;
-            levelTime = 100;
-            createObjects(15, 8, 5, 4, 3);
-            createCollectibles(30);
-            break;
-        case 3:
-            targetScore = 200;
-            levelTime = 90;
-            createObjects(20, 10, 8, 6, 5);
-            createCollectibles(40);
-            break;
-        default:
-            // Niveles infinitos con dificultad creciente
-            targetScore = 300 + (levelNum - 3) * 100;
-            levelTime = Math.max(60, 90 - (levelNum - 3) * 5);
-            createObjects(20 + levelNum, 10 + levelNum, 8 + levelNum, 6 + levelNum, 5 + levelNum);
-            createCollectibles(40 + levelNum * 5);
-    }
-    
-    // Reiniciar tiempo
-    timeRemaining = levelTime;
-    
-    // Actualizar HUD
-    updateHUD();
-}
-
-// Crear objetos que pueden caer en el agujero
-function createObjects(numBuildings, numCars, numTrees, numLampposts, numBenches) {
-    // Crear edificios
-    for (let i = 0; i < numBuildings; i++) {
-        const size = Math.random() * 2 + 1;
-        const height = Math.random() * 4 + 2;
+    /**
+     * Crea los límites del mapa
+     */
+    createMapBoundaries() {
+        const halfSize = this.config.mapSize / 2;
+        const wallHeight = 5;
+        const wallThickness = 1;
         
-        // Posición aleatoria en un radio alrededor del centro
-        const radius = Math.random() * 40 + 10;
-        const angle = Math.random() * Math.PI * 2;
-        const x = Math.cos(angle) * radius;
-        const z = Math.sin(angle) * radius;
-        
-        // Crear edificio
-        const building = new Building(scene, size, height, x, 0, z);
-        objects.push(building);
-    }
-    
-    // Crear coches
-    for (let i = 0; i < numCars; i++) {
-        const radius = Math.random() * 35 + 10;
-        const angle = Math.random() * Math.PI * 2;
-        const x = Math.cos(angle) * radius;
-        const z = Math.sin(angle) * radius;
-        
-        const car = new Car(scene, x, 0, z);
-        objects.push(car);
-    }
-    
-    // Crear árboles
-    for (let i = 0; i < numTrees; i++) {
-        const radius = Math.random() * 35 + 10;
-        const angle = Math.random() * Math.PI * 2;
-        const x = Math.cos(angle) * radius;
-        const z = Math.sin(angle) * radius;
-        
-        const tree = new Tree(scene, x, 0, z);
-        objects.push(tree);
-    }
-    
-    // Crear farolas
-    for (let i = 0; i < numLampposts; i++) {
-        const radius = Math.random() * 35 + 10;
-        const angle = Math.random() * Math.PI * 2;
-        const x = Math.cos(angle) * radius;
-        const z = Math.sin(angle) * radius;
-        
-        const lamppost = new Lamppost(scene, x, 0, z);
-        objects.push(lamppost);
-    }
-    
-    // Crear bancos
-    for (let i = 0; i < numBenches; i++) {
-        const radius = Math.random() * 35 + 10;
-        const angle = Math.random() * Math.PI * 2;
-        const x = Math.cos(angle) * radius;
-        const z = Math.sin(angle) * radius;
-        
-        const bench = new Bench(scene, x, 0, z);
-        objects.push(bench);
-    }
-}
-
-// Crear pequeños puntos de recolección
-function createCollectibles(count) {
-    for (let i = 0; i < count; i++) {
-        // Posición aleatoria en un radio alrededor del centro
-        const radius = Math.random() * 40 + 5;
-        const angle = Math.random() * Math.PI * 2;
-        const x = Math.cos(angle) * radius;
-        const z = Math.sin(angle) * radius;
-        
-        // Crear coleccionable
-        const collectible = new Collectible(scene, x, 0.2, z);
-        collectibles.push(collectible);
-    }
-}
-
-// Clase para los puntos de recolección
-class Collectible {
-    constructor(scene, x, y, z) {
-        this.scene = scene;
-        this.position = new THREE.Vector3(x, y, z);
-        this.size = 0.3;
-        this.value = 1; // Valor de puntuación
-        this.collected = false;
-        
-        // Crear geometría
-        const geometry = new THREE.SphereGeometry(this.size, 16, 16);
-        
-        // Material brillante
-        const material = new THREE.MeshStandardMaterial({
-            color: 0x00ffff,
-            emissive: 0x00ffff,
-            emissiveIntensity: 0.5,
-            metalness: 1.0,
-            roughness: 0.2
+        // Material para los límites
+        const wallMaterial = new THREE.MeshStandardMaterial({
+            color: 0x555555,
+            roughness: 0.7,
+            metalness: 0.3
         });
         
-        // Crear malla
-        this.mesh = new THREE.Mesh(geometry, material);
-        this.mesh.position.copy(this.position);
-        this.mesh.castShadow = true;
-        this.mesh.receiveShadow = true;
-        
-        // Añadir luz
-        this.light = new THREE.PointLight(0x00ffff, 0.5, 3);
-        this.light.position.copy(this.position);
-        this.mesh.add(this.light);
-        
-        // Añadir a la escena
-        this.scene.add(this.mesh);
-        
-        // Animación flotante
-        this.initialY = y;
-        this.animationOffset = Math.random() * Math.PI * 2;
-    }
-    
-    update(time) {
-        if (!this.collected) {
-            // Animación flotante
-            this.mesh.position.y = this.initialY + Math.sin(time * 2 + this.animationOffset) * 0.1;
-            
-            // Rotación
-            this.mesh.rotation.y += 0.02;
-        }
-    }
-    
-    checkCollision(hole) {
-        if (this.collected) return false;
-        
-        const holePos = hole.getPosition();
-        const holeRadius = hole.getRadius();
-        
-        const dx = this.mesh.position.x - holePos.x;
-        const dz = this.mesh.position.z - holePos.z;
-        const distance = Math.sqrt(dx * dx + dz * dz);
-        
-        if (distance < holeRadius) {
-            this.collected = true;
-            
-            // Animación de recolección
-            this.collectAnimation();
-            
-            return true;
-        }
-        
-        return false;
-    }
-    
-    collectAnimation() {
-        // Animación de desaparición
-        const startTime = Date.now();
-        const duration = 500; // 0.5 segundos
-        
-        const animate = () => {
-            const elapsed = Date.now() - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-            
-            // Escalar y elevar
-            this.mesh.scale.set(1 - progress, 1 - progress, 1 - progress);
-            this.mesh.position.y += 0.05;
-            
-            // Reducir intensidad de luz
-            this.light.intensity = 0.5 * (1 - progress);
-            
-            if (progress < 1) {
-                requestAnimationFrame(animate);
-            } else {
-                this.scene.remove(this.mesh);
+        // Crear paredes
+        const walls = [
+            // Norte
+            {
+                position: new THREE.Vector3(0, wallHeight / 2, -halfSize - wallThickness / 2),
+                size: new THREE.Vector3(this.config.mapSize + wallThickness * 2, wallHeight, wallThickness)
+            },
+            // Sur
+            {
+                position: new THREE.Vector3(0, wallHeight / 2, halfSize + wallThickness / 2),
+                size: new THREE.Vector3(this.config.mapSize + wallThickness * 2, wallHeight, wallThickness)
+            },
+            // Este
+            {
+                position: new THREE.Vector3(halfSize + wallThickness / 2, wallHeight / 2, 0),
+                size: new THREE.Vector3(wallThickness, wallHeight, this.config.mapSize)
+            },
+            // Oeste
+            {
+                position: new THREE.Vector3(-halfSize - wallThickness / 2, wallHeight / 2, 0),
+                size: new THREE.Vector3(wallThickness, wallHeight, this.config.mapSize)
             }
-        };
+        ];
         
-        animate();
-    }
-    
-    getValue() {
-        return this.value;
-    }
-}
-
-// Manejar redimensión de ventana
-function onWindowResize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-}
-
-// Actualizar puntuación
-function updateScore(points) {
-    score += points;
-    
-    // Actualizar HUD
-    document.getElementById('score-value').textContent = score;
-    document.getElementById('score-current').textContent = score;
-    
-    // Comprobar si se ha alcanzado el objetivo
-    if (score >= targetScore) {
-        levelUp();
-    }
-}
-
-// Subir de nivel
-function levelUp() {
-    level++;
-    playSound('levelUp');
-    
-    // Mostrar mensaje de nivel completado
-    showLevelCompleteMessage();
-    
-    // Cargar siguiente nivel
-    setTimeout(() => {
-        loadLevel(level);
-    }, 3000);
-}
-
-// Mostrar mensaje de nivel completado
-function showLevelCompleteMessage() {
-    const message = document.createElement('div');
-    message.style.position = 'absolute';
-    message.style.top = '50%';
-    message.style.left = '50%';
-    message.style.transform = 'translate(-50%, -50%)';
-    message.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-    message.style.color = 'white';
-    message.style.padding = '20px 40px';
-    message.style.borderRadius = '10px';
-    message.style.fontSize = '24px';
-    message.style.fontWeight = 'bold';
-    message.style.zIndex = '1000';
-    message.textContent = `¡Nivel ${level-1} completado!`;
-    
-    document.getElementById('game-container').appendChild(message);
-    
-    // Eliminar mensaje después de 3 segundos
-    setTimeout(() => {
-        document.getElementById('game-container').removeChild(message);
-    }, 3000);
-}
-
-// Mostrar pantalla de game over
-function showGameOverScreen() {
-    gameOver = true;
-    
-    // Detener música de fondo
-    if (sounds.background) {
-        sounds.background.stop();
-    }
-    
-    // Reproducir sonido de game over
-    playSound('gameOver');
-    
-    const gameOverScreen = document.createElement('div');
-    gameOverScreen.id = 'game-over-screen';
-    gameOverScreen.style.position = 'absolute';
-    gameOverScreen.style.top = '0';
-    gameOverScreen.style.left = '0';
-    gameOverScreen.style.width = '100%';
-    gameOverScreen.style.height = '100%';
-    gameOverScreen.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
-    gameOverScreen.style.display = 'flex';
-    gameOverScreen.style.flexDirection = 'column';
-    gameOverScreen.style.justifyContent = 'center';
-    gameOverScreen.style.alignItems = 'center';
-    gameOverScreen.style.color = 'white';
-    gameOverScreen.style.fontFamily = 'Arial, sans-serif';
-    gameOverScreen.style.zIndex = '1000';
-    
-    const title = document.createElement('h1');
-    title.textContent = '¡Juego Terminado!';
-    title.style.fontSize = '3em';
-    title.style.marginBottom = '20px';
-    
-    const scoreText = document.createElement('p');
-    scoreText.textContent = `Puntuación final: ${score}`;
-    scoreText.style.fontSize = '2em';
-    scoreText.style.marginBottom = '10px';
-    
-    const levelText = document.createElement('p');
-    levelText.textContent = `Nivel alcanzado: ${level}`;
-    levelText.style.fontSize = '1.5em';
-    levelText.style.marginBottom = '30px';
-    
-    const restartButton = document.createElement('button');
-    restartButton.textContent = 'Reiniciar Juego';
-    restartButton.style.padding = '15px 30px';
-    restartButton.style.fontSize = '1.2em';
-    restartButton.style.backgroundColor = '#4CAF50';
-    restartButton.style.border = 'none';
-    restartButton.style.borderRadius = '5px';
-    restartButton.style.cursor = 'pointer';
-    restartButton.onclick = restartGame;
-    
-    gameOverScreen.appendChild(title);
-    gameOverScreen.appendChild(scoreText);
-    gameOverScreen.appendChild(levelText);
-    gameOverScreen.appendChild(restartButton);
-    
-    document.getElementById('game-container').appendChild(gameOverScreen);
-}
-
-// Reiniciar juego
-function restartGame() {
-    // Reiniciar variables
-    score = 0;
-    level = 1;
-    holeSize = 1.0;
-    gameOver = false;
-    
-    // Reiniciar agujero
-    hole.setSize(holeSize);
-    
-    // Ocultar pantalla de game over
-    const gameOverScreen = document.getElementById('game-over-screen');
-    if (gameOverScreen) {
-        document.getElementById('game-container').removeChild(gameOverScreen);
-    }
-    
-    // Cargar nivel 1
-    loadLevel(1);
-    
-    // Reproducir música de fondo
-    if (sounds.background) {
-        sounds.background.play();
-    }
-}
-
-// Actualizar física
-function updatePhysics() {
-    try {
-        if (world) {
-            // Paso de simulación física
-            world.stepSimulation(1 / 60, 10);
+        // Crear mallas para las paredes
+        walls.forEach(wall => {
+            const geometry = new THREE.BoxGeometry(wall.size.x, wall.size.y, wall.size.z);
+            const mesh = new THREE.Mesh(geometry, wallMaterial);
+            mesh.position.copy(wall.position);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
             
-            // Actualizar objetos con física
-            objects.forEach(object => {
-                if (object.rigidBody) {
-                    const motionState = object.rigidBody.getMotionState();
-                    if (motionState) {
-                        motionState.getWorldTransform(tmpTrans);
-                        const pos = tmpTrans.getOrigin();
-                        const quat = tmpTrans.getRotation();
-                        
-                        object.mesh.position.set(pos.x(), pos.y(), pos.z());
-                        object.mesh.quaternion.set(quat.x(), quat.y(), quat.z(), quat.w());
-                    }
-                }
+            this.scene.add(mesh);
+        });
+    }
+    
+    /**
+     * Inicializa los gestores
+     */
+    initManagers() {
+        // Gestor de física
+        this.physicsEngine = new PhysicsEngine();
+        
+        // Gestor de audio
+        this.audioManager = new AudioManager();
+        
+        // Gestor de UI
+        this.uiManager = new UIManager({
+            container: this.container,
+            audioManager: this.audioManager,
+            gameManager: this
+        });
+        
+        // Actualizar texto de carga
+        this.uiManager.updateLoadingText("Inicializando componentes...");
+    }
+    
+    /**
+     * Configura los eventos
+     */
+    setupEventListeners() {
+        // Redimensionar ventana
+        window.addEventListener('resize', this.onWindowResize.bind(this));
+        
+        // Eventos de teclado
+        window.addEventListener('keydown', this.onKeyDown.bind(this));
+        window.addEventListener('keyup', this.onKeyUp.bind(this));
+    }
+    
+    /**
+     * Carga los recursos del juego
+     */
+    async loadResources() {
+        try {
+            // Actualizar texto de carga
+            this.uiManager.updateLoadingText("Cargando física...");
+            this.uiManager.updateLoadingProgress(0.1);
+            
+            // Inicializar física
+            await this.physicsEngine.init();
+            
+            // Actualizar texto de carga
+            this.uiManager.updateLoadingText("Cargando sonidos...");
+            this.uiManager.updateLoadingProgress(0.3);
+            
+            // Cargar sonidos
+            await this.audioManager.loadSounds();
+            
+            // Actualizar texto de carga
+            this.uiManager.updateLoadingText("Preparando juego...");
+            this.uiManager.updateLoadingProgress(0.7);
+            
+            // Crear gestor de cámara
+            this.cameraManager = new CameraManager(this.camera, {
+                offset: new THREE.Vector3(0, this.config.cameraHeight, -this.config.cameraDistance)
             });
+            
+            // Actualizar texto de carga
+            this.uiManager.updateLoadingText("¡Listo para jugar!");
+            this.uiManager.updateLoadingProgress(1.0);
+            
+            // Pequeña pausa para mostrar que está listo
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+        } catch (error) {
+            console.error("Error al cargar recursos:", error);
+            this.showError("Error al cargar recursos: " + error.message);
+            throw error;
         }
-    } catch (error) {
-        console.error("Error al actualizar física:", error);
     }
-}
-
-// Aumentar el tamaño del agujero basado en el valor del objeto
-function growHole(objectValue) {
-    // Usar el método grow del agujero
-    const growAmount = hole.grow(objectValue);
     
-    // Actualizar tamaño en HUD
-    holeSize = hole.getRadius();
-    document.getElementById('size-value').textContent = holeSize.toFixed(1);
+    /**
+     * Inicia el juego
+     */
+    startGame() {
+        try {
+            console.log("Iniciando juego...");
+            
+            // Reiniciar estado
+            this.state.running = true;
+            this.state.paused = false;
+            this.state.score = 0;
+            this.state.timeRemaining = this.config.timeLimit;
+            this.state.lastTime = this.clock.getElapsedTime();
+            
+            // Crear agujero
+            this.createHole();
+            
+            // Crear gestor de objetos
+            this.objectManager = new ObjectManager(this.scene, {
+                physics: this.physicsEngine,
+                mapSize: this.config.mapSize,
+                buildingCount: 20 + this.state.level * 5,
+                carCount: 10 + this.state.level * 2,
+                treeCount: 15 + this.state.level * 3,
+                lamppostCount: 8 + this.state.level,
+                benchCount: 6 + this.state.level,
+                collectibleCount: 15 + this.state.level * 2
+            });
+            
+            // Inicializar objetos
+            this.objectManager.init();
+            
+            // Reproducir música de fondo
+            this.audioManager.playBackgroundMusic();
+            
+            // Actualizar UI
+            this.uiManager.updateScore(this.state.score);
+            this.uiManager.updateSize(this.hole.getRadius());
+            this.uiManager.updateTime(this.state.timeRemaining);
+            this.uiManager.updateProgress(0);
+            
+            console.log("Juego iniciado correctamente");
+        } catch (error) {
+            console.error("Error al iniciar el juego:", error);
+            this.showError("Error al iniciar el juego: " + error.message);
+        }
+    }
     
-    // Añadir efecto visual
-    addGrowthEffect();
-}
-
-// Añadir efecto visual cuando el agujero crece
-function addGrowthEffect() {
-    // Añadir texto flotante "+SIZE"
-    const growthText = document.createElement('div');
-    growthText.textContent = '+SIZE';
-    growthText.style.position = 'absolute';
-    growthText.style.color = '#4CAF50';
-    growthText.style.fontWeight = 'bold';
-    growthText.style.fontSize = '24px';
-    growthText.style.textShadow = '0 0 5px rgba(0, 0, 0, 0.5)';
-    growthText.style.zIndex = '100';
-    growthText.style.opacity = '1';
-    growthText.style.transition = 'all 1s ease-out';
-    
-    // Posicionar cerca del indicador de tamaño
-    const sizeElement = document.getElementById('size');
-    const rect = sizeElement.getBoundingClientRect();
-    growthText.style.left = rect.left + 'px';
-    growthText.style.top = (rect.top + rect.height) + 'px';
-    
-    document.body.appendChild(growthText);
-    
-    // Animar el texto
-    setTimeout(() => {
-        growthText.style.opacity = '0';
-        growthText.style.transform = 'translateY(-30px)';
+    /**
+     * Crea el agujero (jugador)
+     */
+    createHole() {
+        // Eliminar agujero anterior si existe
+        if (this.hole) {
+            this.hole.dispose();
+        }
         
-        // Eliminar después de la animación
+        // Crear nuevo agujero
+        this.hole = new Hole(this.scene, {
+            radius: this.config.initialHoleSize,
+            depth: 2.0,
+            segments: 32,
+            color: new THREE.Color(0x000033),
+            physics: this.physicsEngine,
+            growFactor: this.config.growFactor,
+            maxRadius: this.config.maxHoleSize
+        });
+        
+        // Establecer como objetivo de la cámara
+        this.cameraManager.setTarget(this.hole);
+    }
+    
+    /**
+     * Pausa el juego
+     */
+    pauseGame() {
+        if (!this.state.running) return;
+        
+        this.state.paused = true;
+        this.audioManager.stopBackgroundMusic();
+    }
+    
+    /**
+     * Reanuda el juego
+     */
+    resumeGame() {
+        if (!this.state.running) return;
+        
+        this.state.paused = false;
+        this.state.lastTime = this.clock.getElapsedTime();
+        this.audioManager.playBackgroundMusic();
+    }
+    
+    /**
+     * Finaliza el juego
+     */
+    endGame() {
+        this.state.running = false;
+        this.state.paused = false;
+        
+        // Detener música
+        this.audioManager.stopBackgroundMusic();
+        
+        // Limpiar objetos
+        if (this.objectManager) {
+            this.objectManager.clear();
+        }
+        
+        // Eliminar agujero
+        if (this.hole) {
+            this.hole.dispose();
+            this.hole = null;
+        }
+    }
+    
+    /**
+     * Pasa al siguiente nivel
+     */
+    nextLevel() {
+        // Incrementar nivel
+        this.state.level++;
+        
+        // Iniciar nuevo juego
+        this.startGame();
+    }
+    
+    /**
+     * Actualiza el juego
+     * @param {number} deltaTime - Tiempo transcurrido desde el último frame
+     */
+    update(deltaTime) {
+        if (!this.state.running || this.state.paused) return;
+        
+        try {
+            // Actualizar tiempo restante
+            this.state.timeRemaining -= deltaTime;
+            if (this.state.timeRemaining <= 0) {
+                this.state.timeRemaining = 0;
+                this.gameOver();
+                return;
+            }
+            
+            // Actualizar física
+            this.physicsEngine.update(deltaTime);
+            
+            // Mover agujero
+            this.moveHole(deltaTime);
+            
+            // Actualizar agujero
+            if (this.hole) {
+                this.hole.update(this.clock.getElapsedTime());
+            }
+            
+            // Actualizar objetos
+            if (this.objectManager) {
+                this.objectManager.update(this.clock.getElapsedTime(), this.camera, this.hole);
+                
+                // Comprobar si se han absorbido todos los objetos
+                if (this.objectManager.areAllObjectsAbsorbed()) {
+                    this.levelComplete();
+                    return;
+                }
+                
+                // Actualizar progreso
+                const progress = 1 - (this.objectManager.getRemainingObjectsCount() / this.objectManager.getInitialObjectsCount());
+                this.uiManager.updateProgress(progress);
+            }
+            
+            // Actualizar cámara
+            if (this.cameraManager) {
+                this.cameraManager.update(deltaTime);
+            }
+            
+            // Actualizar audio listener
+            if (this.audioManager) {
+                this.audioManager.updateListener(this.camera);
+            }
+            
+            // Actualizar UI
+            this.uiManager.updateTime(this.state.timeRemaining);
+            if (this.hole) {
+                this.uiManager.updateSize(this.hole.getRadius());
+            }
+        } catch (error) {
+            console.error("Error en la actualización del juego:", error);
+            this.showError("Error en la actualización del juego: " + error.message);
+        }
+    }
+    
+    /**
+     * Mueve el agujero según la entrada del usuario
+     * @param {number} deltaTime - Tiempo transcurrido desde el último frame
+     */
+    moveHole(deltaTime) {
+        if (!this.hole) return;
+        
+        // Velocidad base
+        const baseSpeed = 10;
+        
+        // Velocidad ajustada por tamaño (más grande = más lento)
+        const sizeMultiplier = 1 - (this.hole.getRadius() / this.config.maxHoleSize) * 0.5;
+        const speed = baseSpeed * sizeMultiplier * deltaTime;
+        
+        // Calcular dirección de movimiento desde teclado
+        let dx = 0;
+        let dz = 0;
+        
+        // Teclas WASD o flechas
+        if (this.state.keys['ArrowUp'] || this.state.keys['w'] || this.state.keys['W']) {
+            dz = -speed;
+        }
+        if (this.state.keys['ArrowDown'] || this.state.keys['s'] || this.state.keys['S']) {
+            dz = speed;
+        }
+        if (this.state.keys['ArrowLeft'] || this.state.keys['a'] || this.state.keys['A']) {
+            dx = -speed;
+        }
+        if (this.state.keys['ArrowRight'] || this.state.keys['d'] || this.state.keys['D']) {
+            dx = speed;
+        }
+        
+        // Joystick (móvil)
+        if (this.state.inputX !== 0 || this.state.inputY !== 0) {
+            dx = this.state.inputX * speed;
+            dz = this.state.inputY * speed;
+        }
+        
+        // Aplicar movimiento
+        if (dx !== 0 || dz !== 0) {
+            // Limitar movimiento al tamaño del mapa
+            const halfMapSize = this.config.mapSize / 2;
+            const holePosition = this.hole.getPosition();
+            const holeRadius = this.hole.getRadius();
+            
+            // Comprobar límites X
+            if (holePosition.x + dx - holeRadius < -halfMapSize) {
+                dx = -halfMapSize + holeRadius - holePosition.x;
+            } else if (holePosition.x + dx + holeRadius > halfMapSize) {
+                dx = halfMapSize - holeRadius - holePosition.x;
+            }
+            
+            // Comprobar límites Z
+            if (holePosition.z + dz - holeRadius < -halfMapSize) {
+                dz = -halfMapSize + holeRadius - holePosition.z;
+            } else if (holePosition.z + dz + holeRadius > halfMapSize) {
+                dz = halfMapSize - holeRadius - holePosition.z;
+            }
+            
+            // Mover agujero
+            this.hole.move(dx, 0, dz);
+        }
+    }
+    
+    /**
+     * Maneja el fin del juego
+     */
+    gameOver() {
+        // Reproducir sonido de fin de juego
+        this.audioManager.playSound('gameOver');
+        
+        // Mostrar pantalla de fin de juego
+        this.uiManager.showGameOver(this.state.score);
+        
+        // Finalizar juego
+        this.endGame();
+    }
+    
+    /**
+     * Maneja la finalización del nivel
+     */
+    levelComplete() {
+        // Reproducir sonido de nivel completado
+        this.audioManager.playSound('levelComplete');
+        
+        // Mostrar pantalla de nivel completado
+        this.uiManager.showLevelComplete(this.state.score);
+        
+        // Finalizar juego
+        this.endGame();
+    }
+    
+    /**
+     * Incrementa la puntuación
+     * @param {number} points - Puntos a añadir
+     */
+    addScore(points) {
+        this.state.score += points;
+        this.uiManager.updateScore(this.state.score);
+    }
+    
+    /**
+     * Establece la entrada del joystick
+     * @param {number} x - Entrada horizontal (-1 a 1)
+     * @param {number} y - Entrada vertical (-1 a 1)
+     */
+    setJoystickInput(x, y) {
+        this.state.inputX = x;
+        this.state.inputY = y;
+    }
+    
+    /**
+     * Maneja el evento de redimensionamiento de la ventana
+     */
+    onWindowResize() {
+        // Actualizar dimensiones
+        this.config.width = window.innerWidth;
+        this.config.height = window.innerHeight;
+        
+        // Actualizar cámara
+        this.camera.aspect = this.config.width / this.config.height;
+        this.camera.updateProjectionMatrix();
+        
+        // Actualizar renderer
+        this.renderer.setSize(this.config.width, this.config.height);
+    }
+    
+    /**
+     * Maneja el evento de tecla presionada
+     * @param {KeyboardEvent} event - Evento de teclado
+     */
+    onKeyDown(event) {
+        this.state.keys[event.key] = true;
+    }
+    
+    /**
+     * Maneja el evento de tecla liberada
+     * @param {KeyboardEvent} event - Evento de teclado
+     */
+    onKeyUp(event) {
+        this.state.keys[event.key] = false;
+    }
+    
+    /**
+     * Muestra un mensaje de error
+     * @param {string} message - Mensaje de error
+     */
+    showError(message) {
+        // Crear elemento para el mensaje
+        const errorElement = document.createElement('div');
+        errorElement.className = 'error-message';
+        errorElement.textContent = message;
+        
+        // Añadir al DOM
+        this.container.appendChild(errorElement);
+        
+        // Eliminar después de un tiempo
         setTimeout(() => {
-            document.body.removeChild(growthText);
-        }, 1000);
-    }, 50);
-    
-    // Añadir clase de animación al indicador de tamaño
-    const sizeValue = document.getElementById('size-value');
-    sizeValue.classList.add('score-increase');
-    
-    // Eliminar la clase después de la animación
-    setTimeout(() => {
-        sizeValue.classList.remove('score-increase');
-    }, 300);
-}
-
-// Bucle de animación
-function animate() {
-    requestAnimationFrame(animate);
-    
-    try {
-        // No actualizar si el juego no ha comenzado o ha terminado
-        if (!gameStarted || gameOver) {
-            renderer.render(scene, camera);
-            return;
-        }
-        
-        // Tiempo actual para animaciones
-        const time = Date.now() * 0.001;
-        
-        // Actualizar tiempo
-        const now = Date.now();
-        const deltaTime = (now - lastUpdateTime) / 1000; // en segundos
-        lastUpdateTime = now;
-        
-        // Actualizar tiempo restante
-        timeRemaining -= deltaTime;
-        document.getElementById('time-value').textContent = Math.ceil(timeRemaining);
-        
-        // Comprobar si se ha acabado el tiempo
-        if (timeRemaining <= 0) {
-            showGameOverScreen();
-            return;
-        }
-        
-        // Mover el agujero con las teclas
-        const moveSpeed = 0.2;
-        if (keys['KeyW'] || keys['ArrowUp']) hole.move(0, 0, moveSpeed);
-        if (keys['KeyS'] || keys['ArrowDown']) hole.move(0, 0, -moveSpeed);
-        if (keys['KeyA'] || keys['ArrowLeft']) hole.move(moveSpeed, 0, 0);
-        if (keys['KeyD'] || keys['ArrowRight']) hole.move(-moveSpeed, 0, 0);
-        
-        // Actualizar cámara para que siga al agujero
-        const holePos = hole.getPosition();
-        camera.position.x = holePos.x;
-        camera.position.z = holePos.z - 15;
-        camera.lookAt(holePos.x, 0, holePos.z);
-        
-        // Actualizar objetos
-        for (let i = objects.length - 1; i >= 0; i--) {
-            const object = objects[i];
-            if (object.checkCollision(hole)) {
-                // Si el objeto colisiona con el agujero
-                const objectValue = object.getValue();
-                
-                // Actualizar puntuación
-                updateScore(objectValue);
-                
-                // Aumentar tamaño del agujero basado en el valor del objeto
-                growHole(objectValue);
-                
-                // Eliminar objeto
-                scene.remove(object.mesh);
-                objects.splice(i, 1);
-                
-                // Reproducir sonido de caída
-                playSound('fall');
-                
-                // Añadir nuevo objeto si quedan pocos
-                if (objects.length < 10) {
-                    addRandomObject();
-                }
+            if (errorElement.parentNode) {
+                errorElement.parentNode.removeChild(errorElement);
             }
-        }
+        }, 5000);
+    }
+    
+    /**
+     * Bucle de animación
+     */
+    animate() {
+        requestAnimationFrame(this.animate.bind(this));
         
-        // Actualizar coleccionables
-        for (let i = collectibles.length - 1; i >= 0; i--) {
-            const collectible = collectibles[i];
-            
-            // Actualizar animación
-            collectible.update(time);
-            
-            if (collectible.checkCollision(hole)) {
-                // Si el coleccionable es recogido
-                updateScore(collectible.getValue());
-                
-                // Reproducir sonido de recolección
-                playSound('collect');
-                
-                // Eliminar de la lista
-                collectibles.splice(i, 1);
-                
-                // Añadir nuevo coleccionable si quedan pocos
-                if (collectibles.length < 10) {
-                    const radius = Math.random() * 40 + 20;
-                    const angle = Math.random() * Math.PI * 2;
-                    const x = Math.cos(angle) * radius;
-                    const z = Math.sin(angle) * radius;
-                    
-                    const collectible = new Collectible(scene, x, 0.2, z);
-                    collectibles.push(collectible);
-                }
-            }
-        }
+        // Calcular delta time
+        const time = this.clock.getElapsedTime();
+        const deltaTime = time - this.state.lastTime;
+        this.state.lastTime = time;
         
-        // Actualizar física
-        if (typeof updatePhysics === 'function') {
-            updatePhysics();
-        }
-        
-        // Actualizar agujero
-        hole.update();
+        // Actualizar juego
+        this.update(deltaTime);
         
         // Renderizar escena
-        renderer.render(scene, camera);
-    } catch (error) {
-        console.error("Error en el bucle de animación:", error);
+        this.renderer.render(this.scene, this.camera);
     }
 }
 
-// Añadir un objeto aleatorio
-function addRandomObject() {
-    const radius = Math.random() * 40 + 20; // Más lejos para que no aparezca de repente
-    const angle = Math.random() * Math.PI * 2;
-    const x = Math.cos(angle) * radius;
-    const z = Math.sin(angle) * radius;
+// Iniciar juego cuando el DOM esté cargado
+document.addEventListener('DOMContentLoaded', () => {
+    // Crear directorio para imágenes si no existe
+    const imgDir = document.createElement('div');
+    imgDir.style.display = 'none';
+    imgDir.id = 'img-directory';
+    document.body.appendChild(imgDir);
     
-    // Tipo aleatorio
-    const type = Math.floor(Math.random() * 5);
-    let object;
+    // Crear directorio para audio si no existe
+    const audioDir = document.createElement('div');
+    audioDir.style.display = 'none';
+    audioDir.id = 'audio-directory';
+    document.body.appendChild(audioDir);
     
-    switch(type) {
-        case 0:
-            const size = Math.random() * 2 + 1;
-            const height = Math.random() * 4 + 2;
-            object = new Building(scene, size, height, x, 0, z);
-            break;
-        case 1:
-            object = new Car(scene, x, 0, z);
-            break;
-        case 2:
-            object = new Tree(scene, x, 0, z);
-            break;
-        case 3:
-            object = new Lamppost(scene, x, 0, z);
-            break;
-        case 4:
-            object = new Bench(scene, x, 0, z);
-            break;
-    }
-    
-    objects.push(object);
-}
-
-// Iniciar el juego cuando se cargue la página
-window.addEventListener('load', init); 
+    // Iniciar juego
+    window.game = new Game({
+        container: document.body
+    });
+}); 
